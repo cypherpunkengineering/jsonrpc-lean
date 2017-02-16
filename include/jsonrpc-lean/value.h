@@ -36,35 +36,12 @@ struct tm;
 
 #if 1 // CYPHERPUNK_IMPLEMENTATION
 
-namespace adl {
-    using std::begin; using std::end; using std::declval;
-    template<class T> auto adl_begin(T&& t) { return begin(std::forward<T>(t)); }
-    template<class T> auto adl_end  (T&& t) { return end  (std::forward<T>(t)); }
-}
-using adl::adl_begin; using adl::adl_end;
+#include <cctype>
 
-/*
-template<typename T> class is_iterable
-{
-    template<typename C> static constexpr auto test(void*) -> decltype(adl_begin(std::declval<C>()), adl_end(std::declval<C>()), std::true_type()) { return std::true_type(); }
-    template<typename C> static constexpr std::false_type test(...) { return std::false_type(); }
-public:
-    static constexpr const bool value = std::is_same<decltype(test<T>(0)), std::true_type>::value;
-};
-*/
 namespace detail {
-    template<typename ...Ts> struct empty_template {};
-    template<typename T, typename _ = void> struct is_iterable : public std::false_type {};
-    template<typename T> struct is_iterable<T,
-        std::conditional_t<false,
-            empty_template<decltype(adl_begin(std::declval<T>())), decltype(adl_end(std::declval<T>()))>,
-            void>
-        > : public std::true_type {};
-
     template<typename T, typename T1, typename ...Tn> struct same_or_convertible { static constexpr const bool value = std::is_same<T, T1>::value || std::is_convertible<T, T1>::value || same_or_convertible<T, Tn...>::value; };
     template<typename T, typename T1> struct same_or_convertible<T, T1> { static constexpr const bool value = std::is_same<T, T1>:: value || std::is_convertible<T, T1>::value; };
 }
-template<typename T> using is_iterable = detail::is_iterable<T>;
 template<typename T, typename ...Tn> using is_passable = detail::same_or_convertible<T, Tn...>;
 
 template<typename T> static inline auto forward_begin(std::remove_reference_t<T>&  iterable) { return                         adl_begin(iterable) ; }
@@ -120,16 +97,16 @@ namespace jsonrpc {
         };
 
     public:
-        constexpr Value() : _type(TYPE_UNDEFINED), _double(0) {}
-        constexpr Value(const Undefined&) : _type(TYPE_UNDEFINED), _double(0) {}
-        constexpr Value(const Null&) : _type(TYPE_NULL), _double(0) {}
-        Value(bool value) : _type(TYPE_BOOLEAN), _boolean(value) {}
-        Value(int value) : _type(TYPE_INT32), _int32(value) {}
-        Value(double value) : _type(TYPE_DOUBLE), _double(value) {}
-        Value(const char* value) : _type(TYPE_STRING), _string(new String(value)) {}
-        Value(String value) : _type(TYPE_STRING), _string(new String(std::move(value))) {}
-        Value(Object value) : _type(TYPE_OBJECT), _object(new Object(std::move(value))) {}
-        Value(Array  value) : _type(TYPE_ARRAY ), _array (new Array (std::move(value))) {}
+		constexpr Value() : _type(TYPE_UNDEFINED) {}
+		constexpr Value(const Undefined&) : _type(TYPE_UNDEFINED) {}
+		constexpr Value(const Null&) : _type(TYPE_NULL) {}
+        constexpr Value(bool value) : _type(TYPE_BOOLEAN), _as(value) {}
+		constexpr Value(int value) : _type(TYPE_INT32), _as(value) {}
+		constexpr Value(double value) : _type(TYPE_DOUBLE), _as(value) {}
+		Value(const char* value) : _type(TYPE_STRING) { _as.stringPointer = new String(value); }
+		Value(String value) : _type(TYPE_STRING) { _as.stringPointer = new String(std::move(value)); }
+		Value(Object value) : _type(TYPE_OBJECT) { _as.objectPointer = new Object(std::move(value)); }
+		Value(Array  value) : _type(TYPE_ARRAY) { _as.arrayPointer = new Array(std::move(value)); }
         // Construct with iterable (use ... to lower priority and let String/Object/Array match first)
         template<typename T, typename = std::enable_if_t<!is_passable<T, String, Object, Array>::value>, typename X = decltype(std::declval<T>().begin(), std::declval<T>().end(), true)> Value(T&& iterable, ...) : Value() { Construct(std::forward<T>(iterable)); }
         // Construct with iterator pair
@@ -144,7 +121,7 @@ namespace jsonrpc {
         Type SetType(Type type)
         {
             if (!CanChangeType(type))
-                throw std::invalid_argument("Attempted to change type of a typed/frozen Value 127");
+                throw std::invalid_argument("Attempted to change type of a typed/frozen Value");
             Type old = (Type)(_type &~ TYPE_FLAGS);
             _type = (Type)((_type & TYPE_FLAGS) | (type &~ TYPE_FLAGS));
             return old;
@@ -153,80 +130,80 @@ namespace jsonrpc {
         void Construct() { SetType(TYPE_UNDEFINED); }
         void Construct(const Undefined&) { SetType(TYPE_UNDEFINED); }
         void Construct(const Null&) { SetType(TYPE_NULL); }
-        Boolean& Construct(Boolean value) { SetType(TYPE_BOOLEAN); return _boolean = value; }
-        Int32& Construct(Int32 value) { SetType(TYPE_INT32); return _int32 = value; }
-        Double& Construct(Double value) { SetType(TYPE_DOUBLE); return _double = value; }
-        Double& Construct(int64_t value) { SetType(TYPE_DOUBLE); return _double = value; }
-        String& Construct(const char* value) { SetType(TYPE_STRING); return *(_string = new String(value)); }
-        String& Construct(String value) { SetType(TYPE_STRING); return *(_string = new String(std::move(value))); }
-        Object& Construct(Object value) { SetType(TYPE_OBJECT); return *(_object = new Object(std::move(value))); }
-        Array & Construct(Array  value) { SetType(TYPE_ARRAY ); return *(_array  = new Array (std::move(value))); }
+        Boolean& Construct(Boolean value) { SetType(TYPE_BOOLEAN); return _as.booleanValue = value; }
+        Int32& Construct(Int32 value) { SetType(TYPE_INT32); return _as.int32Value = value; }
+        Double& Construct(Double value) { SetType(TYPE_DOUBLE); return _as.doubleValue = value; }
+        Double& Construct(int64_t value) { SetType(TYPE_DOUBLE); return _as.doubleValue = (double)value; }
+        String& Construct(const char* value) { SetType(TYPE_STRING); return *(_as.stringPointer = new String(value)); }
+        String& Construct(String value) { SetType(TYPE_STRING); return *(_as.stringPointer = new String(std::move(value))); }
+        Object& Construct(Object value) { SetType(TYPE_OBJECT); return *(_as.objectPointer = new Object(std::move(value))); }
+        Array & Construct(Array  value) { SetType(TYPE_ARRAY ); return *(_as.arrayPointer  = new Array (std::move(value))); }
         // Iterable constructor; matches any type that has member functions begin() and end()
         template<typename T, typename = std::enable_if_t<!is_passable<T, String, Object, Array>::value>, typename X = decltype(std::declval<T>().begin(), std::declval<T>().end(), true)> auto Construct(T&& iterable)
         { return Construct(forward_begin<T>(iterable), forward_end<T>(iterable)); }
 
         template<typename T, typename E = decltype(*std::declval<T>()), typename X = std::enable_if_t<
              std::is_assignable<char, E>::value
-        >> String& Construct(T&& first, T&& last) { SetType(TYPE_STRING); return *(_string = new String(std::forward<T>(first), std::forward<T>(last))); }
+        >> String& Construct(T&& first, T&& last) { SetType(TYPE_STRING); return *(_as.stringPointer = new String(std::forward<T>(first), std::forward<T>(last))); }
         template<typename T, typename E = decltype(*std::declval<T>()), typename X = std::enable_if_t<
             !std::is_assignable<char, E>::value &&
              std::is_assignable<std::pair<const std::string, Value>, E>::value
-        >> Object& Construct(T&& first, T&& last) { SetType(TYPE_OBJECT); return *(_object = new Object(std::forward<T>(first), std::forward<T>(last))); }
+        >> Object& Construct(T&& first, T&& last) { SetType(TYPE_OBJECT); return *(_as.objectPointer = new Object(std::forward<T>(first), std::forward<T>(last))); }
         template<typename T, typename E = decltype(*std::declval<T>()), typename X = std::enable_if_t<
             !std::is_assignable<char, E>::value &&
             !std::is_assignable<std::pair<const std::string, Value>, E>::value &&
              std::is_assignable<Value, E>::value
-        >> Array& Construct(T&& first, T&& last) { SetType(TYPE_ARRAY); return *(_array = new Array(std::forward<T>(first), std::forward<T>(last))); }
+        >> Array& Construct(T&& first, T&& last) { SetType(TYPE_ARRAY); return *(_as.arrayPointer = new Array(std::forward<T>(first), std::forward<T>(last))); }
 
     public:
-        constexpr Type GetType() const { return (Type)(_type & TYPE_MASK); }
+        Type GetType() const { return (Type)(_type & TYPE_MASK); }
 
         bool CanChangeType() const { return (_type & (TYPE_FROZEN)) == 0; }
         bool CanChangeType(Type other) const { return CanChangeType() || GetType() == other; }
         void Freeze() { _type = (Type)(_type | TYPE_FROZEN); }
         void Unfreeze() { _type = (Type)(_type & ~TYPE_FROZEN); }
 
-        constexpr bool IsUndefined() const { return GetType() == TYPE_UNDEFINED; }
-        constexpr bool IsNull() const { return GetType() == TYPE_NULL; }
-        constexpr bool IsBoolean() const { return (GetType() & TYPE_BOOLEAN) != 0; }
-        constexpr bool IsNumber() const { return (GetType() & TYPE_NUMBER) != 0; }
-        constexpr bool IsDouble() const { return GetType() == TYPE_DOUBLE; }
-        constexpr bool IsInt32() const { return GetType() == TYPE_INT32; }
+        bool IsUndefined() const { return GetType() == TYPE_UNDEFINED; }
+        bool IsNull() const { return GetType() == TYPE_NULL; }
+        bool IsBoolean() const { return (GetType() & TYPE_BOOLEAN) != 0; }
+        bool IsNumber() const { return (GetType() & TYPE_NUMBER) != 0; }
+        bool IsDouble() const { return GetType() == TYPE_DOUBLE; }
+        bool IsInt32() const { return GetType() == TYPE_INT32; }
         bool IsString() const { return GetType() == TYPE_STRING; }
         bool IsObject() const { return GetType() == TYPE_OBJECT; }
         bool IsArray() const { return GetType() == TYPE_ARRAY; }
 
-        constexpr bool IsTrue() const { return GetType() == TYPE_BOOLEAN && _boolean; }
-        constexpr bool IsFalse() const { return GetType() == TYPE_BOOLEAN && !_boolean; }
-        constexpr bool IsTruthy() const { return operator bool(); }
-        constexpr bool IsFalsy() const { return !operator bool(); }
+        bool IsTrue() const { return GetType() == TYPE_BOOLEAN && _as.booleanValue; }
+        bool IsFalse() const { return GetType() == TYPE_BOOLEAN && !_as.booleanValue; }
+        bool IsTruthy() const { return operator bool(); }
+        bool IsFalsy() const { return !operator bool(); }
 
-        constexpr explicit operator bool() const
+        explicit operator bool() const
         {
             Type type = GetType();
             if (type < TYPE_BOOLEAN) return false;
             if (type & (TYPE_NUMBER | TYPE_STRING))
             {
-                return (type & TYPE_STRING) ? !_string->empty() :
-                    (type & 1) ? _int32 != 0 : _double != 0;
+                return (type & TYPE_STRING) ? !_as.stringPointer->empty() :
+                    (type & 1) ? _as.int32Value != 0 : _as.doubleValue != 0;
             }
             return true;
         }
 
         static void Check(bool condition) { if (!condition) throw std::invalid_argument(""); }
 
-              Boolean& AsBoolean()       { return Check(IsBoolean()),  _boolean; }
-        const Boolean& AsBoolean() const { return Check(IsBoolean()),  _boolean; }
-              Double & AsDouble ()       { return Check(IsDouble ()),  _double ; }
-        const Double & AsDouble () const { return Check(IsDouble ()),  _double ; }
-              Int32  & AsInt32  ()       { return Check(IsInt32  ()),  _int32  ; }
-        const Int32  & AsInt32  () const { return Check(IsInt32  ()),  _int32  ; }
-              String & AsString ()       { return Check(IsString ()), *_string ; }
-        const String & AsString () const { return Check(IsString ()), *_string ; }
-              Object & AsObject ()       { return Check(IsObject ()), *_object ; }
-        const Object & AsObject () const { return Check(IsObject ()), *_object ; }
-              Array  & AsArray  ()       { return Check(IsArray  ()), *_array  ; }
-        const Array  & AsArray  () const { return Check(IsArray  ()), *_array  ; }
+              Boolean& AsBoolean()       { return Check(IsBoolean()),  _as.booleanValue; }
+        const Boolean& AsBoolean() const { return Check(IsBoolean()),  _as.booleanValue; }
+              Double & AsDouble ()       { return Check(IsDouble ()),  _as.doubleValue ; }
+        const Double & AsDouble () const { return Check(IsDouble ()),  _as.doubleValue ; }
+              Int32  & AsInt32  ()       { return Check(IsInt32  ()),  _as.int32Value  ; }
+        const Int32  & AsInt32  () const { return Check(IsInt32  ()),  _as.int32Value  ; }
+              String & AsString ()       { return Check(IsString ()), *_as.stringPointer ; }
+        const String & AsString () const { return Check(IsString ()), *_as.stringPointer ; }
+              Object & AsObject ()       { return Check(IsObject ()), *_as.objectPointer ; }
+        const Object & AsObject () const { return Check(IsObject ()), *_as.objectPointer ; }
+              Array  & AsArray  ()       { return Check(IsArray  ()), *_as.arrayPointer  ; }
+        const Array  & AsArray  () const { return Check(IsArray  ()), *_as.arrayPointer  ; }
         template<typename T> inline       T& AsType();
         template<typename T> inline const T& AsType() const;
 
@@ -238,18 +215,18 @@ namespace jsonrpc {
         {
             switch (GetType())
             {
-            case TYPE_DOUBLE: return _double;
-            case TYPE_INT32: return (Double)_int32;
-            case TYPE_BOOLEAN: return _boolean ? 1.0 : 0.0;
+            case TYPE_DOUBLE: return _as.doubleValue;
+            case TYPE_INT32: return (Double)_as.int32Value;
+            case TYPE_BOOLEAN: return _as.booleanValue ? 1.0 : 0.0;
             case TYPE_NULL: return 0.0;
-            case TYPE_STRING: return ParseDouble(*_string);
-            case TYPE_ARRAY: return _array->size() == 0 ? 0.0 : _array->size() == 1 ? (*_array)[0].ToDouble() : NaN;
+            case TYPE_STRING: return ParseDouble(*_as.stringPointer);
+            case TYPE_ARRAY: return _as.arrayPointer->size() == 0 ? 0.0 : _as.arrayPointer->size() == 1 ? (*_as.arrayPointer)[0].ToDouble() : NaN;
             default: return NaN;
             }
         }
         Int32 ToInt32() const
         {
-            if (IsInt32()) return _int32;
+            if (IsInt32()) return _as.int32Value;
             double d = ToDouble();
             return isfinite(d) ? (Int32)std::trunc(d) : 0;
         }
@@ -257,20 +234,20 @@ namespace jsonrpc {
         {
             switch (GetType())
             {
-            case TYPE_STRING: return *_string;
+            case TYPE_STRING: return *_as.stringPointer;
             case TYPE_UNDEFINED: return "undefined";
             case TYPE_NULL: return "null";
-            case TYPE_BOOLEAN: return _boolean ? "true" : "false";
+            case TYPE_BOOLEAN: return _as.booleanValue ? "true" : "false";
             case TYPE_DOUBLE:
-                if (std::isnan(_double)) return "NaN";
-                else if (std::isinf(_double)) return _double < 0 ? "-Infinity" : "Infinity";
-                else return std::to_string(_double);
-            case TYPE_INT32: return std::to_string(_int32);
+                if (std::isnan(_as.doubleValue)) return "NaN";
+                else if (std::isinf(_as.doubleValue)) return _as.doubleValue < 0 ? "-Infinity" : "Infinity";
+                else return std::to_string(_as.doubleValue);
+            case TYPE_INT32: return std::to_string(_as.int32Value);
             case TYPE_ARRAY:
             {
                 std::string result;
                 bool first = true;
-                for (const auto& v : *_array)
+                for (const auto& v : *_as.arrayPointer)
                 {
                     if (!first) result += ',';
                     result += v.ToString();
@@ -289,13 +266,13 @@ namespace jsonrpc {
             {
             case TYPE_UNDEFINED:
             case TYPE_NULL: writer.WriteNull(); break;
-            case TYPE_BOOLEAN: writer.Write(_boolean); break;
-            case TYPE_DOUBLE: writer.Write(_double); break;
-            case TYPE_INT32: writer.Write(_int32); break;
-            case TYPE_STRING: writer.Write(*_string); break;
+            case TYPE_BOOLEAN: writer.Write(_as.booleanValue); break;
+            case TYPE_DOUBLE: writer.Write(_as.doubleValue); break;
+            case TYPE_INT32: writer.Write(_as.int32Value); break;
+            case TYPE_STRING: writer.Write(*_as.stringPointer); break;
             case TYPE_OBJECT:
                 writer.StartStruct();
-                for (const auto& p : *_object)
+                for (const auto& p : *_as.objectPointer)
                 {
                     if (p.second.IsUndefined())
                         continue;
@@ -307,7 +284,7 @@ namespace jsonrpc {
                 break;
             case TYPE_ARRAY:
                 writer.StartArray();
-                for (const auto& e : *_array)
+                for (const auto& e : *_as.arrayPointer)
                 {
                     if (e.IsUndefined())
                         writer.WriteNull();
@@ -327,13 +304,13 @@ namespace jsonrpc {
             {
             case TYPE_UNDEFINED: return os << "undefined";
             case TYPE_NULL: return os << "null";
-            case TYPE_BOOLEAN: return os << (value._boolean ? "true" : "false");
-            case TYPE_DOUBLE: return os << value._double;
-            case TYPE_INT32: return os << value._int32;
-            case TYPE_STRING: return os << '"' << *value._string << '"'; // FIXME: doesn't escape
+            case TYPE_BOOLEAN: return os << (value._as.booleanValue ? "true" : "false");
+            case TYPE_DOUBLE: return os << value._as.doubleValue;
+            case TYPE_INT32: return os << value._as.int32Value;
+            case TYPE_STRING: return os << '"' << *value._as.stringPointer << '"'; // FIXME: doesn't escape
             case TYPE_OBJECT:
                 os << '{';
-                for (auto& p : *value._object)
+                for (auto& p : *value._as.objectPointer)
                 {
                     if (first) first = false; else os << ", ";
                     os << p.first << ": " << p.second;
@@ -341,7 +318,7 @@ namespace jsonrpc {
                 return os << '}';
             case TYPE_ARRAY:
                 os << '[';
-                for (auto& e : *value._array)
+                for (auto& e : *value._as.arrayPointer)
                 {
                     if (first) first = false; else os << ", ";
                     os << e;
@@ -360,9 +337,9 @@ namespace jsonrpc {
 
     private:
         // Only worth having overloads to match actual instances of String/Object/Array, otherwise will have to create new instances anyway
-        template<typename T> Value& Assign(T&& value, std::enable_if_t<std::is_base_of<String, std::decay_t<T>>::value, void*> = 0) { if (IsString()) { *_string = std::forward<T>(value); return *this; } else return Reset(std::forward<T>(value)); }
-        template<typename T> Value& Assign(T&& value, std::enable_if_t<std::is_base_of<Object, std::decay_t<T>>::value, void*> = 0) { if (IsObject()) { *_object = std::forward<T>(value); return *this; } else return Reset(std::forward<T>(value)); }
-        template<typename T> Value& Assign(T&& value, std::enable_if_t<std::is_base_of<Array , std::decay_t<T>>::value, void*> = 0) { if (IsArray ()) { *_array  = std::forward<T>(value); return *this; } else return Reset(std::forward<T>(value)); }
+        template<typename T> Value& Assign(T&& value, std::enable_if_t<std::is_base_of<String, std::decay_t<T>>::value, void*> = 0) { if (IsString()) { *_as.stringPointer = std::forward<T>(value); return *this; } else return Reset(std::forward<T>(value)); }
+        template<typename T> Value& Assign(T&& value, std::enable_if_t<std::is_base_of<Object, std::decay_t<T>>::value, void*> = 0) { if (IsObject()) { *_as.objectPointer = std::forward<T>(value); return *this; } else return Reset(std::forward<T>(value)); }
+        template<typename T> Value& Assign(T&& value, std::enable_if_t<std::is_base_of<Array , std::decay_t<T>>::value, void*> = 0) { if (IsArray ()) { *_as.arrayPointer  = std::forward<T>(value); return *this; } else return Reset(std::forward<T>(value)); }
 
         Value& Assign(const Value& copy)
         {
@@ -373,25 +350,25 @@ namespace jsonrpc {
             {
                 switch (type)
                 {
-                case TYPE_STRING: *_string = *copy._string; return *this;
-                case TYPE_OBJECT: *_object = *copy._object; return *this;
-                case TYPE_ARRAY: *_array = *copy._array; return *this;
+                case TYPE_STRING: *_as.stringPointer = *copy._as.stringPointer; return *this;
+                case TYPE_OBJECT: *_as.objectPointer = *copy._as.objectPointer; return *this;
+                case TYPE_ARRAY: *_as.arrayPointer = *copy._as.arrayPointer; return *this;
                 default: break;
                 }
             }
             else if (!CanChangeType())
-                throw std::invalid_argument("Attempted to change type of a frozen Value 335");
+                throw std::invalid_argument("Attempted to change type of a frozen Value");
             else
             {
                 Reset();
                 switch (other)
                 {
-                case TYPE_BOOLEAN: _boolean = copy._boolean; break;
-                case TYPE_DOUBLE: _double = copy._double; break;
-                case TYPE_INT32: _int32 = copy._int32; break;
-                case TYPE_STRING: _string = new String(*copy._string); break;
-                case TYPE_OBJECT: _object = new Object(*copy._object); break;
-                case TYPE_ARRAY: _array = new Array(*copy._array); break;
+                case TYPE_BOOLEAN: _as.booleanValue = copy._as.booleanValue; break;
+                case TYPE_DOUBLE: _as.doubleValue = copy._as.doubleValue; break;
+                case TYPE_INT32: _as.int32Value = copy._as.int32Value; break;
+                case TYPE_STRING: _as.stringPointer = new String(*copy._as.stringPointer); break;
+                case TYPE_OBJECT: _as.objectPointer = new Object(*copy._as.objectPointer); break;
+                case TYPE_ARRAY: _as.arrayPointer = new Array(*copy._as.arrayPointer); break;
                 default: break;
                 }
                 SetType(other);
@@ -404,21 +381,12 @@ namespace jsonrpc {
                 return *this;
             Type type = GetType(), other = move.GetType();
             if (!CanChangeType(other))
-                throw std::invalid_argument("Attempted to change type of a frozen Value 359");
+                throw std::invalid_argument("Attempted to change type of a frozen Value");
             if (move.CanChangeType(TYPE_UNDEFINED))
             {
                 // Fastest case; just steal state and leave the other as undefined
                 Reset();
-                switch (other)
-                {
-                case TYPE_BOOLEAN: _boolean = move._boolean; break;
-                case TYPE_DOUBLE: _double = move._double; break;
-                case TYPE_INT32: _int32 = move._int32; break;
-                case TYPE_STRING: _string = move._string; break;
-                case TYPE_OBJECT: _object = move._object; break;
-                case TYPE_ARRAY: _array = move._array; break;
-                default: break;
-                }
+				_as = move._as;
                 SetType(move.SetType(TYPE_UNDEFINED));
             }
             else if (type == other)
@@ -426,14 +394,12 @@ namespace jsonrpc {
                 // Can swap underlying objects and leave the other side with empty remains
                 switch (type)
                 {
-                case TYPE_BOOLEAN: _boolean = move._boolean; break;
-                case TYPE_DOUBLE: _double = move._double; break;
-                case TYPE_INT32: _int32 = move._int32; break;
-                case TYPE_STRING: _string->clear(); std::swap(_string, move._string);  break;
-                case TYPE_OBJECT: _object->clear(); std::swap(_object, move._object); break;
-                case TYPE_ARRAY: _array->clear(); std::swap(_array, move._array); break;
+                case TYPE_STRING: _as.stringPointer->clear(); break;
+                case TYPE_OBJECT: _as.objectPointer->clear(); break;
+                case TYPE_ARRAY: _as.arrayPointer->clear(); break;
                 default: break;
                 }
+				std::swap(_as, move._as);
             }
             else
             {
@@ -452,12 +418,12 @@ namespace jsonrpc {
             if (a.GetType() != b.GetType()) return false;
             switch (a.GetType())
             {
-            case TYPE_BOOLEAN: return a._boolean == b._boolean;
-            case TYPE_DOUBLE: return a._double == b._double;
-            case TYPE_INT32: return a._int32 == b._int32;
-            case TYPE_STRING: return *a._string == *b._string;
-            case TYPE_OBJECT: return *a._object == *b._object;
-            case TYPE_ARRAY: return *a._array == *b._array;
+            case TYPE_BOOLEAN: return a._as.booleanValue == b._as.booleanValue;
+            case TYPE_DOUBLE: return a._as.doubleValue == b._as.doubleValue;
+            case TYPE_INT32: return a._as.int32Value == b._as.int32Value;
+            case TYPE_STRING: return *a._as.stringPointer == *b._as.stringPointer;
+            case TYPE_OBJECT: return *a._as.objectPointer == *b._as.objectPointer;
+            case TYPE_ARRAY: return *a._as.arrayPointer == *b._as.arrayPointer;
             default: return true;
             }
         }
@@ -501,24 +467,30 @@ namespace jsonrpc {
             Type type = SetType(TYPE_UNDEFINED);
             if (type & (TYPE_STRING | TYPE_OBJECT))
             {
-                if (type == TYPE_STRING) delete _string;
-                else if (type == TYPE_OBJECT) delete _object;
-                else if (type == TYPE_ARRAY) delete _array;
+                if (type == TYPE_STRING) delete _as.stringPointer;
+                else if (type == TYPE_OBJECT) delete _as.objectPointer;
+                else if (type == TYPE_ARRAY) delete _as.arrayPointer;
             }
             return *this;
         }
 
     protected:
         Type _type;
-        union
+        union Storage
         {
-            Boolean _boolean;
-            Double _double;
-            Int32 _int32;
-            String* _string;
-            Object* _object;
-            Array* _array;
-        };
+			struct {} initValue;
+            Boolean booleanValue;
+            Double doubleValue;
+            Int32 int32Value;
+            String* stringPointer;
+            Object* objectPointer;
+            Array* arrayPointer;
+
+			constexpr Storage() : initValue() {}
+			constexpr Storage(bool value) : booleanValue(value) {}
+			constexpr Storage(int value) : int32Value(value) {}
+			constexpr Storage(double value) : doubleValue(value) {}
+		} _as;
 
 
     public:
@@ -532,7 +504,7 @@ namespace jsonrpc {
         bool IsInteger64() const { return false; }
         bool IsNil() const { return IsNull(); }
         int32_t AsInteger32() const { return AsInt32(); }
-        int64_t AsInteger64() const { return Check(IsInteger64()), _int32; }
+        int64_t AsInteger64() const { return Check(IsInteger64()), _as.int32Value; }
     };
 
     template<> inline       Value::Boolean& Value::AsType<Value::Boolean>()       { return AsBoolean(); }
