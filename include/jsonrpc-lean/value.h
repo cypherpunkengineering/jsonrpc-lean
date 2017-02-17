@@ -115,7 +115,7 @@ namespace jsonrpc {
         explicit Value(const Value& copy) : Value() { Assign(copy); }
         Value(Value&& move) noexcept : Value() { Assign(std::move(move)); }
 
-        ~Value() { Reset(); }
+		~Value() { Unfreeze(); Reset(); }
 
     private:
         Type SetType(Type type)
