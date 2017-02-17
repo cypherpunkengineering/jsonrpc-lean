@@ -37,6 +37,7 @@ struct tm;
 #if 1 // CYPHERPUNK_IMPLEMENTATION
 
 #include <cctype>
+#include <cmath>
 
 namespace detail {
     template<typename T, typename T1, typename ...Tn> struct same_or_convertible { static constexpr const bool value = std::is_same<T, T1>::value || std::is_convertible<T, T1>::value || same_or_convertible<T, Tn...>::value; };
@@ -228,7 +229,7 @@ namespace jsonrpc {
         {
             if (IsInt32()) return _as.int32Value;
             double d = ToDouble();
-            return isfinite(d) ? (Int32)std::trunc(d) : 0;
+            return std::isfinite(d) ? (Int32)std::trunc(d) : 0;
         }
         String ToString() const
         {
