@@ -97,16 +97,16 @@ namespace jsonrpc {
         };
 
     public:
-		constexpr Value() : _type(TYPE_UNDEFINED) {}
-		constexpr Value(const Undefined&) : _type(TYPE_UNDEFINED) {}
-		constexpr Value(const Null&) : _type(TYPE_NULL) {}
+        constexpr Value() : _type(TYPE_UNDEFINED) {}
+        constexpr Value(const Undefined&) : _type(TYPE_UNDEFINED) {}
+        constexpr Value(const Null&) : _type(TYPE_NULL) {}
         constexpr Value(bool value) : _type(TYPE_BOOLEAN), _as(value) {}
-		constexpr Value(int value) : _type(TYPE_INT32), _as(value) {}
-		constexpr Value(double value) : _type(TYPE_DOUBLE), _as(value) {}
-		Value(const char* value) : _type(TYPE_STRING) { _as.stringPointer = new String(value); }
-		Value(String value) : _type(TYPE_STRING) { _as.stringPointer = new String(std::move(value)); }
-		Value(Object value) : _type(TYPE_OBJECT) { _as.objectPointer = new Object(std::move(value)); }
-		Value(Array  value) : _type(TYPE_ARRAY) { _as.arrayPointer = new Array(std::move(value)); }
+        constexpr Value(int value) : _type(TYPE_INT32), _as(value) {}
+        constexpr Value(double value) : _type(TYPE_DOUBLE), _as(value) {}
+        Value(const char* value) : _type(TYPE_STRING) { _as.stringPointer = new String(value); }
+        Value(String value) : _type(TYPE_STRING) { _as.stringPointer = new String(std::move(value)); }
+        Value(Object value) : _type(TYPE_OBJECT) { _as.objectPointer = new Object(std::move(value)); }
+        Value(Array  value) : _type(TYPE_ARRAY) { _as.arrayPointer = new Array(std::move(value)); }
         // Construct with iterable (use ... to lower priority and let String/Object/Array match first)
         template<typename T, typename = std::enable_if_t<!is_passable<T, String, Object, Array>::value>, typename X = decltype(std::declval<T>().begin(), std::declval<T>().end(), true)> Value(T&& iterable, ...) : Value() { Construct(std::forward<T>(iterable)); }
         // Construct with iterator pair
@@ -350,10 +350,10 @@ namespace jsonrpc {
             {
                 switch (type)
                 {
-                case TYPE_STRING: *_as.stringPointer = *copy._as.stringPointer; return *this;
-                case TYPE_OBJECT: *_as.objectPointer = *copy._as.objectPointer; return *this;
-                case TYPE_ARRAY: *_as.arrayPointer = *copy._as.arrayPointer; return *this;
-                default: break;
+                case TYPE_STRING: *_as.stringPointer = *copy._as.stringPointer; break;
+                case TYPE_OBJECT: *_as.objectPointer = *copy._as.objectPointer; break;
+                case TYPE_ARRAY: *_as.arrayPointer = *copy._as.arrayPointer; break;
+                default: _as = copy._as; break;
                 }
             }
             else if (!CanChangeType())
@@ -363,13 +363,10 @@ namespace jsonrpc {
                 Reset();
                 switch (other)
                 {
-                case TYPE_BOOLEAN: _as.booleanValue = copy._as.booleanValue; break;
-                case TYPE_DOUBLE: _as.doubleValue = copy._as.doubleValue; break;
-                case TYPE_INT32: _as.int32Value = copy._as.int32Value; break;
                 case TYPE_STRING: _as.stringPointer = new String(*copy._as.stringPointer); break;
                 case TYPE_OBJECT: _as.objectPointer = new Object(*copy._as.objectPointer); break;
                 case TYPE_ARRAY: _as.arrayPointer = new Array(*copy._as.arrayPointer); break;
-                default: break;
+                default: _as = copy._as; break;
                 }
                 SetType(other);
             }
@@ -380,13 +377,34 @@ namespace jsonrpc {
             if (&move == this)
                 return *this;
             Type type = GetType(), other = move.GetType();
-            if (!CanChangeType(other))
-                throw std::invalid_argument("Attempted to change type of a frozen Value");
-            if (move.CanChangeType(TYPE_UNDEFINED))
+            if (!CanChangeType())
             {
-                // Fastest case; just steal state and leave the other as undefined
+                // Internal representation is not allowed to change
+                if (type == other)
+                {
+                    switch (type)
+                    {
+                    case TYPE_STRING: *_as.stringPointer = std::move(*move._as.stringPointer); break;
+                    case TYPE_OBJECT: *_as.objectPointer = std::move(*move._as.objectPointer); break;
+                    case TYPE_ARRAY: *_as.arrayPointer = std::move(*move._as.arrayPointer); break;
+                    default: _as = move._as; break;
+                    }
+                }
+                else
+                    throw std::invalid_argument("Attempted to change type of a frozen Value");
+            }
+            else if ((other & (TYPE_STRING | TYPE_OBJECT | TYPE_ARRAY)) == 0)
+            {
+                // Other state is trivially copyable as-is
                 Reset();
-				_as = move._as;
+                _as = move._as;
+                SetType(other);
+            }
+            else if (move.CanChangeType())
+            {
+                // Just steal state and leave the other as-is
+                Reset();
+                _as = move._as;
                 SetType(move.SetType(TYPE_UNDEFINED));
             }
             else if (type == other)
@@ -399,7 +417,7 @@ namespace jsonrpc {
                 case TYPE_ARRAY: _as.arrayPointer->clear(); break;
                 default: break;
                 }
-				std::swap(_as, move._as);
+                std::swap(_as, move._as);
             }
             else
             {
@@ -478,7 +496,7 @@ namespace jsonrpc {
         Type _type;
         union Storage
         {
-			struct {} initValue;
+            struct {} initValue;
             Boolean booleanValue;
             Double doubleValue;
             Int32 int32Value;
@@ -486,11 +504,11 @@ namespace jsonrpc {
             Object* objectPointer;
             Array* arrayPointer;
 
-			constexpr Storage() : initValue() {}
-			constexpr Storage(bool value) : booleanValue(value) {}
-			constexpr Storage(int value) : int32Value(value) {}
-			constexpr Storage(double value) : doubleValue(value) {}
-		} _as;
+            constexpr Storage() : initValue() {}
+            constexpr Storage(bool value) : booleanValue(value) {}
+            constexpr Storage(int value) : int32Value(value) {}
+            constexpr Storage(double value) : doubleValue(value) {}
+        } _as;
 
 
     public:
